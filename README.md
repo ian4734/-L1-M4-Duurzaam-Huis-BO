@@ -36,85 +36,149 @@ Ik kan als het een bepaalde tijd is een lamp, in het huisje, uit of aan laten ga
 (doen we allemaal samen) 
 
 CODE ARDUINO:
-const int  trigPin = 2;
-const int echoPin = 4;
-const int buzzerPin = 13;
-float duration, distance;
+#include <DHT.h>
+#include <LiquidCrystal.h>
 
+// ---------- Pin-configuratie ----------
+#define DHTPIN_IN   14      // DHT11 Binnen (mogelijk checken)
+#define DHTPIN_OUT  24      // DHT11 buiten  (mogelijk nog checken)
+#define DHTTYPE     DHT11
+
+const int trig   = 2;
+const int echo   = 4;
+const int buzzer = 13;
+
+// pinnen voor zonnepanelen en windmolen
+const int SOLAR_A_PIN = A5;
+const int SOLAR_B_PIN = A4;
+const int WIND_PIN    = A6;
+
+// ---------- Objecten ----------
+DHT dhtIn(DHTPIN_IN, DHTTYPE);
+DHT dhtOut(DHTPIN_OUT, DHTTYPE);
+const int rs = 3, enable = 5,  d4 = 9, d5 = 10, d6 = 11, d7 = 12;
+LiquidCrystal LCD(rs,enable, d4, d5, d6, d7);
+
+
+// ---------- Globale waarden ----------
+float TempInside  = 0;
+float TempOutside = 0;
 
 void setup() {
-  pinMode(buzzerPin, OUTPUT);
-  pinMode(trigPin, OUTPUT);
-  pinMode(echoPin, INPUT);
   Serial.begin(9600);
+
+  pinMode(trig, OUTPUT);
+  pinMode(echo, INPUT);
+  pinMode(buzzer, OUTPUT);
+
+  dhtIn.begin();
+  dhtOut.begin();
+
+  LCD.begin(16, 2);
+  LCD.setCursor(0, 0);
+  LCD.print("Initialiseren...");
+  delay(2000);
+  LCD.clear();
 }
 
 void loop() {
-  digitalWrite(trigPin, LOW);
-  delayMicroseconds(2);
-  digitalWrite(trigPin, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(trigPin, LOW);
-  duration = pulseIn(echoPin, HIGH);
-  distance = (duration*.0343)/2;
-  if (distance < 20) {
-    digitalWrite(buzzerPin, HIGH);
-    delay(100);
-    noTone(buzzerPin);
-    delay(900);
-  } else if (distance < 7) {
-    digitalWrite(buzzerPin, HIGH);
-    delay(500);
-    noTone(buzzerPin);
-    delay(500);
-  } else {
-    noTone(buzzerPin);
+  // Toon temperatuur ~5s, dan zonne-energie ~5s, dan windenergie ~5s.
+  // Elke "tick" duurt ~50 ms, 300 ticks ~= 15 seconden.
+  for (uint16_t i = 0; i < 300; i++) {
+    if (i == 0) {
+      LCD.clear();
+      DisplayTemperature();
+    }
+    else if (i == 100) {
+      LCD.clear();
+      DisplaySolarPower();
+    }
+    else if (i == 200) {
+      LCD.clear();
+      DisplayWindPower();
+    }
+
+    // Afstand meten en eventueel piepen
+    if (ReadUltrasonicSensor() < 20) {
+      digitalWrite(buzzer, HIGH);   // buzzer aan
+      delay(5);
+      digitalWrite(buzzer, LOW);    // buzzer uit
+      delay(45);
+    }
+    else {
+      delay(50);
+    }
   }
-  Serial.print("Distance: ");  
-    Serial.println(distance);
-    delay(100);
 }
 
-------------------------------------------------------------------------------------------------------------------------------------------------------------------
+float ReadUltrasonicSensor() {
+  digitalWrite(trig, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trig, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trig, LOW);
 
-#include "DHT.h"
-       
-// DHT11
-#define DHTTYPE DHT11
+  // Echo meten met timeout (30 ms) zodat de loop niet vastloopt
+  long duration = pulseIn(echo, HIGH, 30000);
 
-uint8_t DHTPin = 24;
-DHT dht(DHTPin, DHTTYPE);
+  float distance = duration * 0.0343 / 2.0;
 
-float Temperature, Humidity, HeatIndex;
+  // Geen echo (timeout) -> behandel als ver weg, niet als 0 cm
+  if (distance <= 0) distance = 999;
 
-void setup() {
-    Serial.begin(115200);
-    dht.begin();
+  return distance;
 }
 
-void loop() {
-    ReadDHT11();
+void DisplayTemperature() {
+  // Lees binnen- & buitentemperatuur van de DHT11's
+  ReadDHT11();
 
-    // Wait before reading DHT11 again...
-    delay(10000);
+  // Toon op het LCD
+  LCD.setCursor(0, 0);
+  LCD.print("Temp In: ");
+  LCD.print(TempInside, 1);
+  LCD.print("c");
+
+  LCD.setCursor(0, 1);
+  LCD.print("Temp Out: ");
+  LCD.print(TempOutside, 1);
+  LCD.print("c");
 }
 
 void ReadDHT11() {
-    float temperature = round(dht.readTemperature() * 10) / 10;
-    float humidity = round(dht.readHumidity() * 10) / 10;
-    float heatIndex = round(dht.computeHeatIndex(temperature, humidity, false) * 10) / 10;
+  float tIn  = dhtIn.readTemperature();
+  float tOut = dhtOut.readTemperature();
 
-    if (isnan(temperature) || isnan(humidity) || isnan(heatIndex)) {
-        // sensor error
-        Serial.println("DHT11 sensor error");
-    }
-    else {
-        Temperature = temperature;
-        Humidity = humidity;
-        HeatIndex = heatIndex;
+  if (!isnan(tIn))  TempInside  = round(tIn  * 10) / 10.0;
+  if (!isnan(tOut)) TempOutside = round(tOut * 10) / 10.0;
 
-        Serial.println("Temp: " + String(Temperature) + " C");
-        Serial.println("Humidity: " + String(Humidity));
-        Serial.println("HeatIndex: " + String(HeatIndex) + "\n");
-    }
+  Serial.println();
+  Serial.println("Temp Out: " + String(TempOutside) + " C");
+
+  LCD.setCursor(0, 0);
+  LCD.print("Temp In: "  + String(TempInside)  + " C");
+
+  LCD.setCursor(0, 1);
+  LCD.print("Temp Out: " + String(TempOutside) + " C");
+}
+
+void DisplaySolarPower() {
+  int solarA = analogRead(SOLAR_A_PIN);
+  int solarB = analogRead(SOLAR_B_PIN);
+
+  LCD.setCursor(0, 0);
+  LCD.print("Solar A: ");
+  LCD.print(solarA);
+
+  LCD.setCursor(0, 1);
+  LCD.print("Solar B: ");
+  LCD.print(solarB);
+}
+
+void DisplayWindPower() {
+  int wind = analogRead(WIND_PIN);
+
+  LCD.setCursor(0, 0);
+  LCD.print("Windmill: ");
+  LCD.print(wind);
 }
